@@ -1,5 +1,6 @@
 import streamlit as st
 import streamlit.components.v1 as components
+import json
 from pathlib import Path
 import re
 
@@ -11,80 +12,61 @@ st.set_page_config(
 
 BASE_DIR = Path(__file__).parent
 
-# Read files
-html = (BASE_DIR / "index.html").read_text(encoding="utf-8")
-css = (BASE_DIR / "styles.css").read_text(encoding="utf-8")
+def read_text(filename: str) -> str:
+    """Read a frontend file relative to this Streamlit entry point."""
+    return (BASE_DIR / filename).read_text(encoding="utf-8")
 
-# Read JavaScript files if they exist
-js_files = {}
 
-for filename in ["data.js", "app.js", "script.js"]:
-    path = BASE_DIR / filename
-    if path.exists():
-        js_files[filename] = path.read_text(encoding="utf-8")
+def inline_local_assets(document: str) -> str:
+    """Replace local stylesheet/script tags while retaining their original order."""
+    document = re.sub(
+        r'<link[^>]+href=["\'](?:\./)?styles\.css["\'][^>]*>',
+        f"<style>\n{read_text('styles.css')}\n</style>",
+        document,
+        flags=re.IGNORECASE,
+    )
 
-# Read world.json if it exists
-world_json = ""
+    for filename in ("data.js", "app.js", "script.js"):
+        document = re.sub(
+            rf'<script[^>]+src=["\'](?:\./)?{re.escape(filename)}["\'][^>]*>\s*</script>',
+            f"<script>\n{read_text(filename)}\n</script>",
+            document,
+            flags=re.IGNORECASE,
+        )
+
+    return document
+
+
+html = inline_local_assets(read_text("index.html"))
+
+# Keep the original page's data contract available even if a future script uses it.
 world_path = BASE_DIR / "world.json"
-
 if world_path.exists():
-    world_json = world_path.read_text(encoding="utf-8")
-
-# Replace CSS file reference with inline CSS
-html = re.sub(
-    r'<link[^>]+href=["\']styles\.css["\'][^>]*>',
-    f"<style>{css}</style>",
-    html,
-    flags=re.IGNORECASE
-)
-
-# Replace JavaScript file references with inline JavaScript
-for filename, content in js_files.items():
-    pattern = rf'<script[^>]+src=["\'](?:\.\/)?{re.escape(filename)}["\'][^>]*>\s*</script>'
-
-    html = re.sub(
-        pattern,
-        f"<script>\n{content}\n</script>",
-        html,
-        flags=re.IGNORECASE
+    world_data = json.loads(world_path.read_text(encoding="utf-8"))
+    world_script = (
+        "<script>window.AUTICURE_WORLD_DATA = "
+        + json.dumps(world_data, ensure_ascii=False, separators=(",", ":"))
+        + ";</script>"
     )
+    html = html.replace("</head>", world_script + "\n</head>", 1)
 
-# Make world.json available to JavaScript
-if world_json:
-    html = html.replace(
-        "</head>",
-        f"""
-        <script>
-        window.AUTICURE_WORLD_DATA = {world_json};
-        </script>
-        </head>
-        """
-    )
-
-# Remove Streamlit-style margins around the embedded page
+# components.html runs in an iframe. These rules remove the iframe document's
+# default margins without touching the site's own layout or component styles.
 wrapper = f"""
 <style>
 html, body {{
     margin: 0 !important;
     padding: 0 !important;
     width: 100% !important;
+    min-height: 100% !important;
     overflow-x: hidden !important;
 }}
-
-body {{
-    background: transparent !important;
-}}
-
-.stApp {{
-    background: transparent !important;
-}}
 </style>
-
 {html}
 """
 
 components.html(
     wrapper,
-    height=1200,
+    height=900,
     scrolling=True
 )
